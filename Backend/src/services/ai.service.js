@@ -4,7 +4,7 @@ const { zodToJsonSchema } = require("zod-to-json-schema")
 const puppeteer = require("puppeteer")
 
 const ai = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_GENAI_API_KEY
+    apiKey: process.env.GOOGLE_GENAI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
 })
 
 
@@ -32,27 +32,51 @@ const interviewReportSchema = z.object({
     title: z.string().describe("The title of the job for which the interview report is generated"),
 })
 
-async function generateContentWithRetry(params, maxRetries = 4) {
-    let lastError = null
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            return await ai.models.generateContent(params)
-        } catch (err) {
-            lastError = err
-            const isTransient =
-                err.status === 503 ||
-                err.status === 429 ||
-                (err.message && (err.message.includes("503") || err.message.includes("high demand") || err.message.includes("UNAVAILABLE")))
+const CANDIDATE_MODELS = Array.from(new Set([
+    process.env.GEMINI_MODEL,
+    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview"
+].filter(Boolean)))
 
-            if (isTransient && attempt < maxRetries) {
-                const delayMs = attempt * 2000
-                console.warn(`[Gemini AI] High demand spike encountered (503/429). Retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})...`)
-                await new Promise(resolve => setTimeout(resolve, delayMs))
-                continue
+async function generateContentWithRetry(params, maxRetriesPerModel = 2) {
+    const initialModel = params.model || process.env.GEMINI_MODEL || "gemini-flash-lite-latest"
+    const modelsToTry = Array.from(new Set([initialModel, ...CANDIDATE_MODELS]))
+
+    let lastError = null
+
+    for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
+        const currentModel = modelsToTry[mIdx]
+        for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
+            try {
+                return await ai.models.generateContent({
+                    ...params,
+                    model: currentModel
+                })
+            } catch (err) {
+                lastError = err
+                const isTransient =
+                    err.status === 503 ||
+                    err.status === 429 ||
+                    (err.message && (err.message.includes("503") || err.message.includes("high demand") || err.message.includes("UNAVAILABLE")))
+
+                if (isTransient && attempt < maxRetriesPerModel) {
+                    const delayMs = attempt * 1500
+                    console.warn(`[Gemini AI] High demand spike on ${currentModel} (503/429). Retrying in ${delayMs}ms (attempt ${attempt}/${maxRetriesPerModel})...`)
+                    await new Promise(resolve => setTimeout(resolve, delayMs))
+                    continue
+                }
+
+                // If this model failed and we have other models to try, log fallback and continue
+                if (mIdx < modelsToTry.length - 1) {
+                    console.warn(`[Gemini AI] Model ${currentModel} unavailable (${err.status || err.message?.slice(0, 80)}). Falling back to ${modelsToTry[mIdx + 1]}...`)
+                    break
+                }
+
+                throw err
             }
-            throw err
         }
     }
+
     throw lastError
 }
 
@@ -65,7 +89,7 @@ async function generateInterviewReport({ resume, selfDescription, jobDescription
 `
 
     const response = await generateContentWithRetry({
-        model: "gemini-3-flash-preview",
+        model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
         contents: prompt,
         config: {
             responseMimeType: "application/json",
@@ -123,7 +147,7 @@ async function generateResumePdf({ resume, selfDescription, jobDescription }) {
                     `
 
     const response = await generateContentWithRetry({
-        model: "gemini-3-flash-preview",
+        model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
         contents: prompt,
         config: {
             responseMimeType: "application/json",
