@@ -9,4 +9,5 @@ const PORT = process.env.PORT || 3000
 
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is running on port ${PORT}`)
+    console.log(`JWT secret configured: ${Boolean(process.env.JWT_SECRET)}`)
 })
