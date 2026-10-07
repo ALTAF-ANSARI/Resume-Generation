@@ -14,9 +14,14 @@ export const useAuth = () => {
         setLoading(true)
         try {
             const data = await login({ email, password })
+            if (!data?.user) {
+                throw new Error("Login failed. Please check your credentials.")
+            }
             setUser(data.user)
+            return { success: true, error: "" }
         } catch (err) {
-
+            const message = err?.response?.data?.message || err?.message || "Unable to login. Please try again."
+            return { success: false, error: message }
         } finally {
             setLoading(false)
         }
@@ -26,9 +31,14 @@ export const useAuth = () => {
         setLoading(true)
         try {
             const data = await register({ username, email, password })
+            if (!data?.user) {
+                throw new Error("Registration failed. Please try again.")
+            }
             setUser(data.user)
+            return { success: true, error: "" }
         } catch (err) {
-
+            const message = err?.response?.data?.message || err?.message || "Unable to register. Please try again."
+            return { success: false, error: message }
         } finally {
             setLoading(false)
         }
